@@ -1,0 +1,78 @@
+apiVersion: v1                        # core Kubernetes API version
+kind: Service                         # creating a Service
+metadata:
+  name: mongodb-headless              # name of this Service
+  namespace: roboshop                 # create it inside the roboshop namespace
+  labels:
+    project: roboshop                 # tag: belongs to roboshop project
+    component: mongodb                # tag: this is the mongodb component
+    tier: db                          # tag: database layer
+spec:
+  ports:
+  - protocol: TCP                     # network protocol
+    port: 27017                       # port the Service listens on
+    targetPort: 27017                 # port the MongoDB container listens on
+  clusterIP: None                     # headless: returns pod IPs directly, no single service IP
+  selector:                           # send traffic to pods with ALL these labels
+    project: roboshop
+    component: mongodb
+    tier: db
+---                                   # separator
+apiVersion: v1                        # core Kubernetes API version
+kind: Service                         # creating a second, normal Service
+metadata:
+  name: mongodb                       # name other apps use to connect (mongodb:27017)
+  namespace: roboshop                 # inside roboshop namespace
+  labels:
+    project: roboshop                 # tag: project
+    component: mongodb                # tag: component
+    tier: db                          # tag: database layer
+spec:
+  ports:
+  - protocol: TCP                     # network protocol
+    port: 27017                       # port the Service listens on
+    targetPort: 27017                 # port the MongoDB container listens on
+  selector:                           # send traffic to pods with these labels
+    project: roboshop
+    component: mongodb
+    tier: db
+---                                   # separator
+apiVersion: apps/v1                   # StatefulSets belong to the "apps" API group
+kind: StatefulSet                     # creating a StatefulSet (database needs its own disk)
+metadata:
+  name: mongodb                       # name of the StatefulSet (pods will be mongodb-0, mongodb-1...)
+  namespace: roboshop                 # inside roboshop namespace
+  labels:
+    project: roboshop                 # tag: project
+    component: mongodb                # tag: component
+    tier: db                          # tag: database layer
+spec:
+  selector:
+    matchLabels:                      # manage pods that have these labels
+      project: roboshop
+      component: mongodb
+      tier: db
+  serviceName: "mongodb-headless"     # use the headless Service for stable pod DNS names
+  replicas: 1                         # run 1 MongoDB pod
+  template:                           # blueprint for each pod
+    metadata:
+      labels:                         # labels on each pod (must match selector)
+        project: roboshop
+        component: mongodb
+        tier: db
+    spec:
+      containers:
+      - name: mongodb                 # container name
+        image: joindevops/mongodb:4.0.0   # MongoDB image (with roboshop data pre-loaded)
+        volumeMounts:
+        - name: mongodb               # mount the volume named mongodb (from template below)
+          mountPath: /data/db         # MongoDB's data folder, stored on the EBS disk
+  volumeClaimTemplates:               # auto-create one PVC per pod
+  - metadata:
+      name: mongodb                   # PVC name prefix (PVC becomes mongodb-mongodb-0)
+    spec:
+      accessModes: [ "ReadWriteOnce" ]  # one node at a time (EBS)
+      storageClassName: "roboshop-ebs"  # use the EBS StorageClass to auto-create the disk
+      resources:
+        requests:
+          storage: 1Gi                # 1Gi disk for MongoDB data
