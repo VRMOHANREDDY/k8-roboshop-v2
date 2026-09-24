@@ -1,0 +1,82 @@
+# ===================== 1. HEADLESS SERVICE =====================
+apiVersion: v1                      # Core API version, where Service objects live
+kind: Service                       # Creating a Service (stable network endpoint for pods)
+metadata:                           # Identifying info
+  name: rabbitmq-headless           # Service name; used by the StatefulSet for pod DNS
+  namespace: roboshop               # Created in the roboshop namespace
+  labels:                           # Labels on the Service itself
+    project: roboshop               # Belongs to the roboshop project
+    component: rabbitmq             # This is the rabbitmq component
+    tier: db                        # Grouped under the data/backend tier
+spec:                               # Desired behavior of the Service
+  ports:                            # List of ports this Service exposes
+  - protocol: TCP                   # Uses the TCP protocol
+    port: 5672                      # Port the Service listens on (RabbitMQ AMQP default)
+    targetPort: 5672                # Port on the container where traffic is forwarded
+  clusterIP: None                   # No virtual IP, so DNS returns individual pod IPs (headless)
+  selector:                         # Chooses which pods this Service points to
+    project: roboshop               # Pod must have project=roboshop
+    component: rabbitmq             # Pod must have component=rabbitmq
+    tier: db                        # Pod must have tier=db
+---                                 # Separator: next Kubernetes object starts here
+# ===================== 2. NORMAL (ClusterIP) SERVICE =====================
+apiVersion: v1                      # Core API version for Service
+kind: Service                       # Creating another Service
+metadata:                           # Identifying info
+  name: rabbitmq                    # Name other apps use to connect (rabbitmq:5672)
+  namespace: roboshop               # Same roboshop namespace
+  labels:                           # Labels on this Service
+    project: roboshop               # Project label
+    component: rabbitmq             # Component label
+    tier: db                        # Tier label
+spec:                               # Service behavior
+  ports:                            # Exposed ports
+  - protocol: TCP                   # TCP protocol
+    port: 5672                      # Service port clients connect to
+    targetPort: 5672                # Container port traffic goes to
+  selector:                         # Pods this Service load-balances across
+    project: roboshop               # Match project=roboshop
+    component: rabbitmq             # Match component=rabbitmq
+    tier: db                        # Match tier=db
+---                                 # Separator for the next object
+# ===================== 3. STATEFULSET =====================
+apiVersion: apps/v1                 # "apps" API group, where StatefulSets live
+kind: StatefulSet                   # Manages stateful pods with stable names and storage
+metadata:                           # Identifying info
+  name: rabbitmq                    # StatefulSet name; pods become rabbitmq-0, rabbitmq-1, ...
+  namespace: roboshop               # Created in the roboshop namespace
+  labels:                           # Labels on the StatefulSet object
+    project: roboshop               # Project label
+    component: rabbitmq             # Component label
+    tier: db                        # Tier label
+spec:                               # Desired state of the StatefulSet
+  selector:                         # How the StatefulSet finds the pods it owns
+    matchLabels:                    # Pods must have all of these labels
+      project: roboshop             # Match project=roboshop
+      component: rabbitmq           # Match component=rabbitmq
+      tier: db                      # Match tier=db
+  serviceName: "rabbitmq-headless"  # Headless Service giving each pod a stable DNS name
+  replicas: 1                       # Run exactly 1 rabbitmq pod (rabbitmq-0)
+  template:                         # Blueprint used to create each pod
+    metadata:                       # Pod metadata
+      labels:                       # Labels applied to each pod (must match the selector)
+        project: roboshop           # Pod gets project=roboshop
+        component: rabbitmq         # Pod gets component=rabbitmq
+        tier: db                    # Pod gets tier=db
+    spec:                           # Pod specification
+      containers:                   # List of containers in the pod
+      - name: rabbitmq              # Container name
+        image: rabbitmq:3           # Official RabbitMQ version 3 image
+        volumeMounts:               # Volumes to mount inside the container
+        - name: rabbitmq            # Refers to the volume named "rabbitmq" (from the PVC template)
+          mountPath: /var/lib/rabbitmq   # Where RabbitMQ stores queues, messages and node data
+  # PVC                             # Comment: persistent volume claim section starts
+  volumeClaimTemplates:             # Auto-creates a separate PVC for each pod
+  - metadata:                       # PVC metadata
+      name: rabbitmq                # PVC name (actual PVC becomes rabbitmq-rabbitmq-0)
+    spec:                           # PVC specification
+      accessModes: [ "ReadWriteOnce" ]    # Volume can be mounted read-write by one node only
+      storageClassName: "roboshop-ebs"    # Uses the roboshop-ebs StorageClass (AWS EBS disk)
+      resources:                    # Resource requests for the volume
+        requests:                   # Minimum storage requested
+          storage: 1Gi              # Asks for 1 GiB of disk space
