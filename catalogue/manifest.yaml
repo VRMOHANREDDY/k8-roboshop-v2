@@ -1,0 +1,97 @@
+# ===================== 1. CONFIGMAP =====================
+apiVersion: v1                      # Core API version, where ConfigMaps live
+kind: ConfigMap                     # Stores app config as key-value pairs
+metadata:                           # Identifying info
+  name: catalogue                   # ConfigMap name; referenced by the Deployment below
+  namespace: roboshop               # Created in the roboshop namespace
+data:                               # The actual key-value data
+  MONGO: "true"                     # Tells the catalogue app to use MongoDB (quoted, since values must be strings)
+  MONGO_URL: "mongodb://mongodb:27017/catalogue"   # Connection string: "mongodb" Service, port 27017, database "catalogue"
+---                                 # Separator: next Kubernetes object starts here
+# ===================== 2. DEPLOYMENT =====================
+apiVersion: apps/v1                 # "apps" API group, where Deployments live
+kind: Deployment                    # Manages stateless pods (no fixed names or per-pod storage)
+metadata:                           # Identifying info
+  name: catalogue                   # Deployment name; pods get random suffixes like catalogue-7d9f-x2k4
+  namespace: roboshop               # Created in the roboshop namespace
+  # labels related to deployment resource   # Comment: these labels are on the Deployment object itself
+  labels:                           # Labels on the Deployment
+    project: roboshop               # Project label
+    tier: backend                   # Backend tier (app logic, not a database)
+    component: catalogue            # Catalogue component
+spec:                               # Desired state of the Deployment
+  replicas: 1                       # Start with 1 pod (the HPA can change this later)
+  selector:                         # How the Deployment finds the pods it owns
+    matchLabels:                    # Pods must have all of these labels
+      project: roboshop             # Match project=roboshop
+      tier: backend                 # Match tier=backend
+      component: catalogue          # Match component=catalogue
+  # Pod                             # Comment: pod template starts here
+  template:                         # Blueprint used to create each pod
+    metadata:                       # Pod metadata
+      labels:                       # Labels applied to each pod (must match the selector)
+        project: roboshop           # Pod gets project=roboshop
+        tier: backend               # Pod gets tier=backend
+        component: catalogue        # Pod gets component=catalogue
+    spec:                           # Pod specification
+      containers:                   # List of containers in the pod
+      - name: catalogue             # Container name
+        image: ramdocker22/catalogue:4.0.0   # Catalogue app image (Node.js product-listing service)
+        resources:                  # CPU/memory settings for the container
+          requests:                 # Minimum guaranteed resources, used for scheduling
+            cpu: "100m"             # 100 millicores = 0.1 CPU core
+            memory: "128Mi"         # 128 MiB of memory
+          limits:                   # Maximum the container is allowed to use
+            requests:               # ⚠️ MISTAKE: stray line, doesn't belong under limits
+            cpu: "100m"             # Max 0.1 CPU core (throttled beyond this)
+            memory: "128Mi"         # Max 128 MiB memory (killed with OOMKilled beyond this)
+        envFrom:                    # Load environment variables from a source
+        - configMapRef:             # The source is a ConfigMap
+            name: catalogue         # MONGO and MONGO_URL become env variables in the container
+---                                 # Separator for the next object
+# ===================== 3. SERVICE =====================
+apiVersion: v1                      # Core API version for Service
+kind: Service                       # Stable network endpoint in front of the pods
+metadata:                           # Identifying info
+  name: catalogue                   # Other apps connect using catalogue:8080
+  namespace: roboshop               # Same roboshop namespace
+  # servicer labels                 # Comment: labels on the Service object itself
+  labels:                           # Labels on this Service
+    project: roboshop               # Project label
+    tier: backend                   # Tier label
+    component: catalogue            # Component label
+spec:                               # Service behavior
+  # Service uses the below labels to select the pods   # Comment explaining the selector
+  selector:                         # Pods this Service sends traffic to
+    project: roboshop               # Match project=roboshop
+    tier: backend                   # Match tier=backend
+    component: catalogue            # Match component=catalogue
+  ports:                            # Exposed ports
+    - protocol: TCP                 # TCP protocol
+      port: 8080                    # Service port clients connect to
+      targetPort: 8080              # Container port the catalogue app listens on
+---                                 # Separator for the next object
+# ===================== 4. HORIZONTAL POD AUTOSCALER =====================
+apiVersion: autoscaling/v2          # Autoscaling API group, version 2
+kind: HorizontalPodAutoscaler       # Automatically adds or removes pods based on load
+metadata:                           # Identifying info
+  name: catalogue                   # HPA name
+  labels:                           # Labels on the HPA
+    project: roboshop               # Project label
+    tier: backend                   # Tier label
+    component: catalogue            # Component label
+spec:                               # Autoscaling rules
+  # deployment reference            # Comment: which workload to scale
+  scaleTargetRef:                   # The object this HPA controls
+    apiVersion: apps/v1             # API version of the target
+    kind: Deployment                # Target is a Deployment
+    name: catalogue                 # The "catalogue" Deployment above
+  minReplicas: 1                    # Never go below 1 pod
+  maxReplicas: 10                   # Never go above 10 pods
+  metrics:                          # What to measure when deciding to scale
+  - type: Resource                  # Use a built-in resource metric
+    resource:                       # Resource metric details
+      name: cpu                     # Watch CPU usage
+      target:                       # The goal to maintain
+        type: Utilization           # Measured as a percentage of the CPU request
+        averageUtilization: 50      # Add pods when average CPU goes above 50% of 100m (i.e., 50m)
