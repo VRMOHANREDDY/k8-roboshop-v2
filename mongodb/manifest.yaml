@@ -63,7 +63,7 @@ spec:
     spec:
       containers:
       - name: mongodb                 # container name
-        image: joindevops/mongodb:4.0.0   # MongoDB image (with roboshop data pre-loaded)
+        image: ramdocker22/mongodb:4.0.0   # MongoDB image (with roboshop data pre-loaded)
         volumeMounts:
         - name: mongodb               # mount the volume named mongodb (from template below)
           mountPath: /data/db         # MongoDB's data folder, stored on the EBS disk
