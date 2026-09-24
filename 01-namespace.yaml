@@ -1,7 +1,8 @@
-apiVersion: storage.k8s.io/v1
-kind: StorageClass
+apiVersion: v1
+kind: Namespace
 metadata:
-  name: roboshop-ebs
-provisioner: ebs.csi.aws.com
-reclaimPolicy: Retain
-volumeBindingMode: WaitForFirstConsumer
+  name: roboshop
+  labels:
+    environment: dev
+    project: roboshop
+    purpose: poc
